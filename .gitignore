@@ -1,0 +1,109 @@
+# ===== Elixir / Phoenix =====
+/_build/
+/cover/
+/deps/
+/doc/
+/.fetch
+erl_crash.dump
+*.ez
+*.beam
+/tmp/
+backend/_build/
+backend/deps/
+backend/cover/
+backend/.fetch
+backend/priv/static/
+backend/priv/uploads/
+
+# Phoenix LiveReload
+/backend/priv/static/assets/
+
+# Ecto
+*.db
+*.sqlite
+
+# Mix
+backend/mix.lock.bak
+
+# ===== Node / Frontend =====
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/coverage/
+*.tsbuildinfo
+
+# ===== Python (AI service) =====
+ai_service/__pycache__/
+ai_service/*.pyc
+ai_service/*.pyo
+ai_service/*.pyd
+ai_service/.Python
+ai_service/env/
+ai_service/venv/
+ai_service/.venv/
+ai_service/.env
+ai_service/dist/
+ai_service/build/
+ai_service/*.egg-info/
+ai_service/.pytest_cache/
+ai_service/.mypy_cache/
+ai_service/.ruff_cache/
+*.pyc
+__pycache__/
+
+# ===== Environment / Secrets =====
+.env
+.env.local
+.env.*.local
+*.secret.exs
+config/prod.secret.exs
+config/releases.exs
+backend/config/prod.secret.exs
+
+# ===== Editors =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.iml
+
+# ===== OS =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ===== Docker =====
+.docker/
+
+# ===== Logs =====
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Test artifacts =====
+coverage/
+.nyc_output/
+htmlcov/
+.coverage
+junit.xml
+test-results/
+
+# ===== Terraform / GCP =====
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfvars
+gcp-credentials.json
+service-account-key.json
