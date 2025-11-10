@@ -1,0 +1,323 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MIX_ENV: test
+  ELIXIR_VERSION: "1.16"
+  OTP_VERSION: "26"
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ─── Backend (Elixir) ────────────────────────────────────────────────────
+  backend-deps:
+    name: Backend — Compile & Cache Deps
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        id: cache-deps
+        with:
+          path: |
+            backend/deps
+            backend/_build
+          key: deps-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('backend/mix.lock') }}
+          restore-keys: |
+            deps-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+      - name: Install Mix dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: mix deps.get
+
+      - name: Compile (warnings as errors)
+        run: mix compile --warnings-as-errors
+
+  backend-format:
+    name: Backend — Format Check
+    runs-on: ubuntu-latest
+    needs: backend-deps
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Restore deps cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            backend/deps
+            backend/_build
+          key: deps-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('backend/mix.lock') }}
+      - name: Check formatting
+        run: mix format --check-formatted
+
+  backend-credo:
+    name: Backend — Credo Lint
+    runs-on: ubuntu-latest
+    needs: backend-deps
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Restore deps cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            backend/deps
+            backend/_build
+          key: deps-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('backend/mix.lock') }}
+      - name: Run Credo
+        run: mix credo --strict
+
+  backend-test:
+    name: Backend — Tests
+    runs-on: ubuntu-latest
+    needs: backend-deps
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: interviewflow
+          POSTGRES_PASSWORD: interviewflow
+          POSTGRES_DB: interviewflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://interviewflow:interviewflow@localhost:5432/interviewflow_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY_BASE: ci_test_secret_key_base_replace_not_for_production_use_at_all
+      GUARDIAN_SECRET_KEY: ci_test_guardian_secret_key_replace_not_for_production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Restore deps cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            backend/deps
+            backend/_build
+          key: deps-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('backend/mix.lock') }}
+      - name: Run migrations
+        run: mix ecto.create && mix ecto.migrate
+      - name: Run tests
+        run: mix test --color --warnings-as-errors
+      - name: Upload test coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/cover/
+
+  # ─── Frontend (TypeScript / React) ──────────────────────────────────────
+  frontend-deps:
+    name: Frontend — Install Dependencies
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+
+  frontend-typecheck:
+    name: Frontend — TypeScript Type Check
+    runs-on: ubuntu-latest
+    needs: frontend-deps
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Type check
+        run: npm run type-check
+
+  frontend-lint:
+    name: Frontend — ESLint
+    runs-on: ubuntu-latest
+    needs: frontend-deps
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Run ESLint
+        run: npm run lint
+
+  frontend-test:
+    name: Frontend — Vitest
+    runs-on: ubuntu-latest
+    needs: frontend-deps
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Run tests
+        run: npm run test -- --run --coverage
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+
+  frontend-build:
+    name: Frontend — Production Build
+    runs-on: ubuntu-latest
+    needs: [frontend-typecheck, frontend-lint, frontend-test]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: https://api.interviewflow.io
+          VITE_WS_URL: wss://api.interviewflow.io
+
+  # ─── AI Service (Python) ─────────────────────────────────────────────────
+  ai-lint:
+    name: AI Service — Ruff + mypy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai_service
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ai_service/requirements*.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+      - name: mypy type check
+        run: mypy app/
+
+  ai-test:
+    name: AI Service — pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai_service
+    env:
+      ENVIRONMENT: test
+      VERTEX_AI_PROJECT: test-project
+      VERTEX_AI_LOCATION: us-central1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ai_service/requirements*.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run tests
+        run: pytest -v --cov=app --cov-report=xml
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-coverage
+          path: ai_service/coverage.xml
+
+  # ─── CI Gate ─────────────────────────────────────────────────────────────
+  ci-pass:
+    name: CI — All Checks Passed
+    runs-on: ubuntu-latest
+    needs:
+      - backend-test
+      - backend-format
+      - backend-credo
+      - frontend-build
+      - frontend-test
+      - ai-lint
+      - ai-test
+    steps:
+      - name: All checks passed
+        run: echo "All CI checks passed successfully."

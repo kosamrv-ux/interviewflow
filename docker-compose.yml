@@ -1,0 +1,154 @@
+version: "3.9"
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgres://interviewflow:interviewflow@db:5432/interviewflow_dev
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY_BASE: ${SECRET_KEY_BASE:-dev_secret_key_base_min_64_chars_replace_in_production_please}
+  GUARDIAN_SECRET_KEY: ${GUARDIAN_SECRET_KEY:-dev_guardian_secret_replace_in_production}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+  GCP_PROJECT_ID: ${GCP_PROJECT_ID:-interviewflow-local}
+  GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-interviewflow-dev-recordings}
+  AI_SERVICE_URL: http://ai_service:8000
+  PHX_HOST: localhost
+  PORT: 4000
+  MIX_ENV: dev
+  POOL_SIZE: 10
+
+services:
+  # ─── Infrastructure ────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: interviewflow_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: interviewflow
+      POSTGRES_PASSWORD: interviewflow
+      POSTGRES_DB: interviewflow_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interviewflow -d interviewflow_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: interviewflow_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── Backend (Elixir / Phoenix) ────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: interviewflow_backend
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - backend_deps:/app/deps
+      - backend_build:/app/_build
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    command: mix phx.server
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─── Frontend (React / Vite) ───────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: interviewflow_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:4000
+      VITE_WS_URL: ws://localhost:4000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    stdin_open: true
+    tty: true
+    command: npm run dev -- --host 0.0.0.0 --port 3000
+
+  # ─── AI Scoring Service (Python / FastAPI) ─────────────────────────────────
+  ai_service:
+    build:
+      context: ./ai_service
+      dockerfile: Dockerfile.dev
+    container_name: interviewflow_ai
+    restart: unless-stopped
+    environment:
+      VERTEX_AI_PROJECT: ${GCP_PROJECT_ID:-interviewflow-local}
+      VERTEX_AI_LOCATION: ${VERTEX_AI_LOCATION:-us-central1}
+      VERTEX_AI_ENDPOINT: ${VERTEX_AI_ENDPOINT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-credentials.json
+      LOG_LEVEL: debug
+      PORT: 8000
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./ai_service:/app
+      - ${GCP_CREDENTIALS_FILE:-./scripts/fake-gcp-credentials.json}:/app/gcp-credentials.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─── Database admin (optional, comment out if not needed) ─────────────────
+  adminer:
+    image: adminer:4-standalone
+    container_name: interviewflow_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_deps:
+    driver: local
+  backend_build:
+    driver: local
+  frontend_node_modules:
+    driver: local
