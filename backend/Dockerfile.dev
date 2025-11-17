@@ -1,0 +1,23 @@
+FROM elixir:1.16-alpine
+
+RUN apk add --no-cache \
+    build-base \
+    git \
+    nodejs \
+    npm \
+    curl \
+    inotify-tools
+
+WORKDIR /app
+
+RUN mix local.hex --force && \
+    mix local.rebar --force
+
+COPY mix.exs mix.lock ./
+RUN mix deps.get
+
+COPY . .
+
+EXPOSE 4000
+
+CMD ["mix", "phx.server"]
