@@ -1,0 +1,10 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+google-cloud-aiplatform==1.38.1
+google-auth==2.27.0
+tenacity==8.2.3
+httpx==0.26.0
+python-dotenv==1.0.0
+structlog==24.1.0
+prometheus-client==0.19.0
