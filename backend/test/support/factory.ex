@@ -101,4 +101,63 @@ defmodule InterviewFlow.Factory do
       source_details: %{}
     }
   end
+
+  alias InterviewFlow.Interviews.{Interview, VideoSession}
+  alias InterviewFlow.Scoring.AiScore
+  alias InterviewFlow.Candidates.Invitation
+
+  def interview_factory do
+    %Interview{
+      application: build(:application),
+      title: "#{Enum.random(["Technical", "Phone Screen", "Onsite", "Panel"])} Interview",
+      interview_type: Enum.random(["video", "phone", "technical", "panel"]),
+      status: "scheduled",
+      scheduled_at:
+        DateTime.utc_now()
+        |> DateTime.add(Enum.random(1..14) * 86_400, :second)
+        |> DateTime.truncate(:microsecond),
+      duration_minutes: Enum.random([30, 45, 60, 90]),
+      notes: Faker.Lorem.sentence()
+    }
+  end
+
+  def video_session_factory do
+    %VideoSession{
+      interview: build(:interview),
+      status: "active",
+      participant_count: 0,
+      started_at: DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    }
+  end
+
+  def ai_score_factory do
+    %AiScore{
+      application: build(:application),
+      composite_score: Enum.random(50..95) / 100,
+      communication_score: Enum.random(50..95) / 100,
+      technical_score: Enum.random(50..95) / 100,
+      problem_solving_score: Enum.random(50..95) / 100,
+      cultural_fit_score: Enum.random(50..95) / 100,
+      summary: Faker.Lorem.sentence(12),
+      strengths: Faker.Lorem.words(3),
+      concerns: Faker.Lorem.words(2),
+      recommendation: Enum.random(["strong_hire", "hire", "no_hire"]),
+      model_version: "gemini-1.5-pro-002",
+      scored_at: DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    }
+  end
+
+  def invitation_factory do
+    %Invitation{
+      company: build(:company),
+      invited_by: build(:user),
+      email: Faker.Internet.email(),
+      role: "recruiter",
+      token: :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false),
+      expires_at:
+        DateTime.utc_now()
+        |> DateTime.add(7 * 86_400, :second)
+        |> DateTime.truncate(:microsecond)
+    }
+  end
 end
