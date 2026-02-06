@@ -1,0 +1,143 @@
+# InterviewFlow Grafana Alert Rules
+# Provisioned automatically via grafana/provisioning/alerting/
+# Managed with grafana-agent or Grafana OSS alerting.
+
+apiVersion: 1
+
+groups:
+  - name: interviewflow-api
+    folder: InterviewFlow
+    interval: 1m
+    rules:
+      - uid: if-api-error-rate
+        title: API Error Rate > 5%
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              expr: |
+                sum(rate(phoenix_http_request_duration_milliseconds_count{status=~"5.."}[5m]))
+                /
+                sum(rate(phoenix_http_request_duration_milliseconds_count[5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { params: [0.05], type: gt }
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "API error rate exceeds 5% for 5 minutes"
+          runbook_url: "https://docs.interviewflow.io/runbooks/api-errors"
+        labels:
+          severity: warning
+          team: backend
+
+      - uid: if-p99-latency
+        title: API P99 Latency > 2000ms
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              expr: |
+                histogram_quantile(0.99,
+                  sum by (le) (rate(phoenix_http_request_duration_milliseconds_bucket[5m])))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { params: [2000], type: gt }
+        for: 5m
+        annotations:
+          summary: "API P99 latency exceeds 2s"
+          runbook_url: "https://docs.interviewflow.io/runbooks/high-latency"
+        labels:
+          severity: warning
+          team: backend
+
+  - name: interviewflow-ai-scoring
+    folder: InterviewFlow
+    interval: 5m
+    rules:
+      - uid: if-ai-score-latency
+        title: AI Scoring P95 Latency > 30s
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              expr: |
+                histogram_quantile(0.95,
+                  rate(interviewflow_ai_score_latency_seconds_bucket[10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { params: [30], type: gt }
+        for: 10m
+        annotations:
+          summary: "AI scoring service P95 latency exceeds 30 seconds"
+          runbook_url: "https://docs.interviewflow.io/runbooks/ai-scoring-slow"
+        labels:
+          severity: critical
+          team: ai-platform
+
+  - name: interviewflow-database
+    folder: InterviewFlow
+    interval: 1m
+    rules:
+      - uid: if-db-pool-saturation
+        title: Database Connection Pool > 90%
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              expr: |
+                ecto_queue_length_total / ecto_pool_size_total
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { params: [0.9], type: gt }
+        for: 3m
+        annotations:
+          summary: "Database connection pool is at {{ humanizePercentage $value }} capacity"
+        labels:
+          severity: critical
+          team: backend
