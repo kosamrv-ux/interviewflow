@@ -70,6 +70,9 @@ defmodule InterviewFlow.MixProject do
       # Observability
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.1"},
+      {:prom_ex, "~> 1.9"},
+      {:sentry, "~> 10.2"},
+      {:logger_json, "~> 6.1"},
 
       # Utilities
       {:uuid, "~> 1.1"},
