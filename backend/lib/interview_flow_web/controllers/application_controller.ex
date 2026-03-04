@@ -48,23 +48,43 @@ defmodule InterviewFlowWeb.ApplicationController do
     end
   end
 
-  @doc "GET /api/v1/applications — Lists applications with filters."
+  @doc """
+  GET /api/v1/applications — Lists applications with filters and pagination.
+
+  Pagination: pass `page` (1-based) and `limit` (max 100, default 25).
+  Response includes X-Pagination-* headers:
+    X-Pagination-Page, X-Pagination-Limit, X-Pagination-Has-More
+  """
   def index(conn, params) do
     company_id = conn.assigns.current_user.company_id
 
+    limit = parse_limit(params["limit"])
+    page  = parse_page(params["page"])
+
     opts = [
-      job_id: params["job_id"],
+      job_id:         params["job_id"],
       pipeline_stage: params["stage"],
-      assigned_to: params["assigned_to"],
-      status: params["status"] || "active",
-      limit: parse_limit(params["limit"])
+      assigned_to:    params["assigned_to"],
+      status:         params["status"] || "active",
+      limit:          limit,
+      page:           page
     ]
 
-    applications = Candidates.list_applications(company_id, opts)
+    case Candidates.list_applications(company_id, opts) do
+      {:ok, result} ->
+        conn
+        |> put_status(:ok)
+        |> put_resp_header("x-pagination-page",     to_string(page))
+        |> put_resp_header("x-pagination-limit",    to_string(limit))
+        |> put_resp_header("x-pagination-has-more", to_string(result.meta.has_more))
+        |> json(%{data: Enum.map(result.data, &render_application/1), meta: result.meta})
 
-    conn
-    |> put_status(:ok)
-    |> json(%{data: Enum.map(applications, &render_application/1)})
+      applications when is_list(applications) ->
+        # Legacy path — context returned plain list
+        conn
+        |> put_status(:ok)
+        |> json(%{data: Enum.map(applications, &render_application/1)})
+    end
   end
 
   @doc "GET /api/v1/applications/:id — Returns an application with full context."
@@ -217,8 +237,12 @@ defmodule InterviewFlowWeb.ApplicationController do
   end
 
   defp parse_limit(nil), do: 25
-  defp parse_limit(n) when is_binary(n), do: String.to_integer(n)
-  defp parse_limit(n) when is_integer(n), do: n
+  defp parse_limit(n) when is_binary(n), do: n |> String.to_integer() |> min(100) |> max(1)
+  defp parse_limit(n) when is_integer(n), do: min(n, 100)
+
+  defp parse_page(nil), do: 1
+  defp parse_page(n) when is_binary(n), do: n |> String.to_integer() |> max(1)
+  defp parse_page(n) when is_integer(n), do: max(n, 1)
 
   defp format_errors(%Ecto.Changeset{} = changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
