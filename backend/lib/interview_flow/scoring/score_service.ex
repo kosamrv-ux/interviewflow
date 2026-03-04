@@ -76,10 +76,24 @@ defmodule InterviewFlow.Scoring.ScoreService do
     end
   end
 
-  @doc "Returns the latest score for an application, or nil."
+  @doc """
+  Returns the latest score for an application, or nil.
+  Result is cached at warm TTL (300 s) to avoid repeated DB reads on the
+  application detail page which polls every 5 s during active scoring.
+  """
   @spec latest_score(Ecto.UUID.t()) :: AiScore.t() | nil
   def latest_score(application_id) do
-    Scoring.latest_score_for_application(application_id)
+    cache_key = InterviewFlow.Cache.agg_key("latest_score", application_id)
+
+    case InterviewFlow.Cache.get(cache_key) do
+      {:ok, score} ->
+        score
+
+      :miss ->
+        score = Scoring.latest_score_for_application(application_id)
+        if score, do: InterviewFlow.Cache.put(cache_key, score, InterviewFlow.Cache.ttl(:warm))
+        score
+    end
   end
 
   @doc "Returns all scores for an application (including overrides), newest first."
