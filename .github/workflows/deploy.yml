@@ -1,0 +1,230 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (staging | production)"
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: "Docker image tag to deploy (default: commit SHA)"
+        required: false
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false  # Never cancel in-flight deploys
+
+env:
+  REGISTRY: us-east1-docker.pkg.dev
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-east1
+
+jobs:
+  # ── Determine environment ─────────────────────────────────────────────────
+  setup:
+    name: Resolve deploy target
+    runs-on: ubuntu-24.04
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      image_tag:   ${{ steps.env.outputs.image_tag }}
+    steps:
+      - id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+          else
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          fi
+
+          TAG="${{ inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.sha }}"
+          fi
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+
+  # ── Build & push Docker images ────────────────────────────────────────────
+  build:
+    name: Build images
+    needs: setup
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      matrix:
+        service:
+          - name: api
+            context: backend
+            dockerfile: backend/Dockerfile
+          - name: ai
+            context: ai_service
+            dockerfile: ai_service/Dockerfile
+          - name: signaling
+            context: signaling
+            dockerfile: signaling/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build and push ${{ matrix.service.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context:    ${{ matrix.service.context }}
+          file:       ${{ matrix.service.dockerfile }}
+          push:       true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/${{ matrix.service.name }}:${{ needs.setup.outputs.image_tag }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/${{ matrix.service.name }}:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/${{ matrix.service.name }}:buildcache
+          cache-to:   type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/${{ matrix.service.name }}:buildcache,mode=max
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
+            BUILD_ENV=${{ needs.setup.outputs.environment }}
+
+  # ── Terraform plan (staging only for PRs) ────────────────────────────────
+  terraform-plan:
+    name: Terraform plan
+    needs: [setup, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.x"
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        run: terraform init -backend-config="prefix=terraform/${{ needs.setup.outputs.environment }}/state"
+
+      - name: Terraform plan
+        working-directory: infra/terraform
+        env:
+          TF_VAR_project_id:   ${{ env.PROJECT_ID }}
+          TF_VAR_environment:  ${{ needs.setup.outputs.environment }}
+          TF_VAR_app_image:    "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/api:${{ needs.setup.outputs.image_tag }}"
+          TF_VAR_ai_image:     "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/ai:${{ needs.setup.outputs.image_tag }}"
+          TF_VAR_signaling_image: "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/signaling:${{ needs.setup.outputs.image_tag }}"
+          TF_VAR_alert_email:  ${{ secrets.ALERT_EMAIL }}
+        run: terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
+
+  # ── Deploy ────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to ${{ needs.setup.outputs.environment }}
+    needs: [setup, build, terraform-plan]
+    runs-on: ubuntu-24.04
+    environment: ${{ needs.setup.outputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.x"
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        env:
+          TF_VAR_project_id:      ${{ env.PROJECT_ID }}
+          TF_VAR_environment:     ${{ needs.setup.outputs.environment }}
+          TF_VAR_app_image:       "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/api:${{ needs.setup.outputs.image_tag }}"
+          TF_VAR_ai_image:        "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/ai:${{ needs.setup.outputs.image_tag }}"
+          TF_VAR_signaling_image: "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/signaling:${{ needs.setup.outputs.image_tag }}"
+          TF_VAR_alert_email:     ${{ secrets.ALERT_EMAIL }}
+        run: |
+          terraform init -backend-config="prefix=terraform/${{ needs.setup.outputs.environment }}/state"
+          terraform apply -auto-approve tfplan
+
+      - name: Run DB migrations
+        run: |
+          gcloud run jobs create migrate-${{ github.sha }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/interviewflow/api:${{ needs.setup.outputs.image_tag }}" \
+            --region ${{ env.REGION }} \
+            --set-env-vars RELEASE_COMMAND=migrate \
+            --service-account ${{ secrets.MIGRATION_SA }} \
+            --execute-now \
+            --wait \
+            --project ${{ env.PROJECT_ID }}
+
+      - name: Smoke test
+        run: |
+          ENV=${{ needs.setup.outputs.environment }}
+          URL="https://interviewflow-${ENV}.interviewflow.io/api/health"
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+            if [ "$STATUS" = "200" ]; then
+              echo "Smoke test passed (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i: status $STATUS, retrying..."
+            sleep 10
+          done
+          echo "Smoke test FAILED after 5 attempts"
+          exit 1
+
+  # ── Notify ────────────────────────────────────────────────────────────────
+  notify:
+    name: Notify Slack
+    needs: [setup, deploy]
+    runs-on: ubuntu-24.04
+    if: always()
+    steps:
+      - name: Post to Slack
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ needs.deploy.result == 'success' && ':white_check_mark:' || ':x:' }} Deploy to *${{ needs.setup.outputs.environment }}* ${{ needs.deploy.result }}",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "${{ needs.deploy.result == 'success' && ':white_check_mark:' || ':x:' }} *InterviewFlow* deploy to `${{ needs.setup.outputs.environment }}` *${{ needs.deploy.result }}*\nCommit: <${{ github.event.head_commit.url }}|${{ github.sha }}>\nAuthor: ${{ github.actor }}"
+                }
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
