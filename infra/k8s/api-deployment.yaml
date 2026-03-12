@@ -1,0 +1,176 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: interviewflow-api
+  namespace: interviewflow
+  labels:
+    app: interviewflow-api
+    component: backend
+    managed-by: terraform
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: interviewflow-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: interviewflow-api
+        component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "4000"
+        prometheus.io/path:   "/metrics"
+    spec:
+      serviceAccountName: interviewflow-api
+      terminationGracePeriodSeconds: 60
+
+      containers:
+        - name: api
+          image: us-east1-docker.pkg.dev/PROJECT_ID/interviewflow/api:IMAGE_TAG
+          ports:
+            - name: http
+              containerPort: 4000
+              protocol: TCP
+
+          env:
+            - name: PHX_HOST
+              value: "api.interviewflow.io"
+            - name: PORT
+              value: "4000"
+            - name: ENVIRONMENT
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: interviewflow-secrets
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: interviewflow-secrets
+                  key: redis-url
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: interviewflow-secrets
+                  key: secret-key-base
+            - name: GUARDIAN_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: interviewflow-secrets
+                  key: guardian-secret-key
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /api/v1/readiness
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 4000
+            failureThreshold: 12
+            periodSeconds: 5
+
+          lifecycle:
+            preStop:
+              exec:
+                # Allow in-flight requests to drain before pod terminates
+                command: ["/bin/sh", "-c", "sleep 5"]
+
+      # Cloud SQL Auth Proxy sidecar
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            - "PROJECT_ID:us-east1:interviewflow-production-db"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            runAsNonRoot: true
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: interviewflow-api
+  namespace: interviewflow
+  labels:
+    app: interviewflow-api
+spec:
+  selector:
+    app: interviewflow-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4000
+  type: ClusterIP
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: interviewflow-api
+  namespace: interviewflow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: interviewflow-api
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
