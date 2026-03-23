@@ -6,6 +6,7 @@ defmodule InterviewFlow.Accounts do
   import Ecto.Query, warn: false
   alias InterviewFlow.Repo
   alias InterviewFlow.Accounts.{Company, User}
+  alias InterviewFlow.AuditLog
 
   # ─── Company ────────────────────────────────────────────────────────────────
 
@@ -61,18 +62,74 @@ defmodule InterviewFlow.Accounts do
   end
 
   @doc """
-  Authenticates a user by email and password.
-  Returns `{:ok, user}` on success, `{:error, :invalid_credentials}` on failure.
-  Timing-safe: always runs bcrypt even for missing users.
+  Authenticates a user by email and password with brute-force protection.
+
+  Returns:
+  - `{:ok, user}`               — successful authentication
+  - `{:error, :invalid_credentials}` — wrong password (timing-safe)
+  - `{:error, {:account_locked, locked_until}}` — account temporarily locked
+
+  Security properties:
+  - Always runs `Bcrypt.verify_pass/2` even for missing users (timing-safe).
+  - Increments `failed_login_count` on failure; locks account for 15 minutes
+    after 5 consecutive failures.
+  - Resets `failed_login_count` and records `last_login_at` on success.
+  - `locked_until` is compared server-side — client cannot clear the lock.
   """
+  @max_login_attempts  5
+  @lockout_minutes     15
+
   def authenticate_user(email, password) when is_binary(email) and is_binary(password) do
     user = get_user_by_email(email)
 
-    if User.valid_password?(user, password) do
-      {:ok, Repo.update!(User.sign_in_changeset(user))}
-    else
-      {:error, :invalid_credentials}
+    # Always run bcrypt to prevent user-enumeration via timing
+    cond do
+      is_nil(user) ->
+        Bcrypt.no_user_verify()
+        {:error, :invalid_credentials}
+
+      locked?(user) ->
+        # Still verify password (timing safety) but return lock error
+        User.valid_password?(user, password)
+        {:error, {:account_locked, user.locked_until}}
+
+      User.valid_password?(user, password) ->
+        user
+        |> User.sign_in_changeset()
+        |> Repo.update!()
+        |> then(&{:ok, &1})
+
+      true ->
+        record_failed_login(user)
+        {:error, :invalid_credentials}
     end
+  end
+
+  defp locked?(%User{locked_until: nil}), do: false
+
+  defp locked?(%User{locked_until: until}) do
+    DateTime.compare(DateTime.utc_now(), until) == :lt
+  end
+
+  defp record_failed_login(%User{failed_login_count: count} = user) do
+    new_count = count + 1
+
+    attrs =
+      if new_count >= @max_login_attempts do
+        locked_until = DateTime.add(DateTime.utc_now(), @lockout_minutes * 60, :second)
+        %{failed_login_count: new_count, locked_until: locked_until}
+      else
+        %{failed_login_count: new_count}
+      end
+
+    user
+    |> Ecto.Changeset.change(attrs)
+    |> Repo.update()
+
+    AuditLog.log_security(user.id, "failed_login", %{
+      attempt: new_count,
+      locked: new_count >= @max_login_attempts
+    })
   end
 
   @doc """
