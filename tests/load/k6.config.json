@@ -1,0 +1,37 @@
+{
+  "scenarios": {
+    "recruiter_workflow": {
+      "executor": "ramping-vus",
+      "stages": [
+        { "duration": "2m",  "target": 50  },
+        { "duration": "5m",  "target": 50  },
+        { "duration": "2m",  "target": 200 },
+        { "duration": "30s", "target": 500 },
+        { "duration": "2m",  "target": 50  },
+        { "duration": "1m",  "target": 0   }
+      ],
+      "exec": "default",
+      "gracefulStop": "30s"
+    },
+    "candidate_apply": {
+      "executor": "constant-arrival-rate",
+      "rate": 10,
+      "timeUnit": "1m",
+      "duration": "12m",
+      "preAllocatedVUs": 5,
+      "maxVUs": 20,
+      "exec": "applyScenario",
+      "startTime": "2m"
+    }
+  },
+  "thresholds": {
+    "http_req_duration{endpoint:applications_list}": ["p(99)<250"],
+    "http_req_duration{endpoint:interview_upcoming}": ["p(99)<80"],
+    "http_req_duration{endpoint:application_detail}": ["p(99)<150"],
+    "http_req_duration{endpoint:dashboard}":          ["p(99)<300"],
+    "http_req_failed":  ["rate<0.01"],
+    "auth_errors":      ["count<10"]
+  },
+  "summaryTrendStats": ["avg", "min", "med", "max", "p(90)", "p(95)", "p(99)"],
+  "summaryTimeUnit":   "ms"
+}
