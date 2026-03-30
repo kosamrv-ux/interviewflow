@@ -1,0 +1,87 @@
+name: Load Test
+
+on:
+  # Run on staging deploys to catch regressions before production
+  workflow_run:
+    workflows: [Deploy]
+    types: [completed]
+    branches: [staging]
+
+  # Manual trigger for ad-hoc load testing
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Target URL"
+        required: true
+        default: "https://staging.interviewflow.io"
+      scenario:
+        description: "Scenario to run"
+        required: true
+        default: "interview_flow"
+        type: choice
+        options: [interview_flow, spike_test]
+
+jobs:
+  load-test:
+    name: k6 load test — ${{ inputs.scenario || 'interview_flow' }}
+    runs-on: ubuntu-24.04
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Fetch load-test token from Secret Manager
+        id: secrets
+        run: |
+          TOKEN=$(gcloud secrets versions access latest \
+            --secret interviewflow-staging-load-test-token \
+            --project ${{ secrets.GCP_PROJECT_ID }})
+          echo "::add-mask::$TOKEN"
+          echo "load_test_token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Run load test
+        env:
+          BASE_URL:          ${{ inputs.base_url || 'https://staging.interviewflow.io' }}
+          LOAD_TEST_TOKEN:   ${{ steps.secrets.outputs.load_test_token }}
+          K6_CLOUD_TOKEN:    ${{ secrets.K6_CLOUD_TOKEN }}
+        run: |
+          SCENARIO="${{ inputs.scenario || 'interview_flow' }}"
+          k6 run \
+            --out json=results-${SCENARIO}.json \
+            --summary-export summary-${SCENARIO}.json \
+            -e BASE_URL="$BASE_URL" \
+            -e LOAD_TEST_TOKEN="$LOAD_TEST_TOKEN" \
+            tests/load/scenarios/${SCENARIO}.js
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results-${{ github.run_id }}
+          path: |
+            results-*.json
+            summary-*.json
+          retention-days: 30
+
+      - name: Post summary to PR / commit
+        if: always()
+        run: |
+          SCENARIO="${{ inputs.scenario || 'interview_flow' }}"
+          if [ -f "summary-${SCENARIO}.json" ]; then
+            P99=$(jq '.metrics.http_req_duration.values["p(99)"]' summary-${SCENARIO}.json)
+            ERRORS=$(jq '.metrics.http_req_failed.values.rate' summary-${SCENARIO}.json)
+            echo "## k6 Load Test Results — ${SCENARIO}" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| p(99) http_req_duration | ${P99} ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Error rate | ${ERRORS} |" >> $GITHUB_STEP_SUMMARY
+          fi
