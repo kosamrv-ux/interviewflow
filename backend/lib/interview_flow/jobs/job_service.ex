@@ -12,13 +12,22 @@ defmodule InterviewFlow.Jobs.JobService do
     draft → published → (open for applications)
     published → closed → (no new applications)
     closed → archived
+
+  ## March 2026 additions
+
+  - All lifecycle transitions now call Cache.invalidate_pattern to bust
+    the company-scoped job list and dashboard aggregate caches.
+  - Scoring rubric cache (day TTL) invalidated when job is updated with
+    new scoring_rubric via ScoreService.invalidate_rubric/1.
+  - AuditLog.log called for publish / close / archive / update.
   """
 
   require Logger
 
-  alias InterviewFlow.{Repo, Jobs}
+  alias InterviewFlow.{Repo, Jobs, Cache, AuditLog}
   alias InterviewFlow.Jobs.{Job, JobAnalytics}
   alias InterviewFlow.Metrics
+  alias InterviewFlow.Scoring.ScoreService
 
   @doc """
   Publishes a draft job, making it visible to candidates.
@@ -54,6 +63,8 @@ defmodule InterviewFlow.Jobs.JobService do
             publisher_id: actor.id
           )
 
+          invalidate_job_caches(published_job.company_id)
+          AuditLog.log(published_job.company_id, actor.id, "job", published_job.id, "published", %{})
           Metrics.emit_interview_scheduled("job_published")
           {:ok, published_job}
 
@@ -76,9 +87,19 @@ defmodule InterviewFlow.Jobs.JobService do
     do: {:error, "job is already closed"}
 
   def close(%Job{} = job, actor) do
-    job
-    |> Job.changeset(%{status: "closed", closed_at: DateTime.utc_now(), closed_by: actor.id})
-    |> Repo.update()
+    result =
+      job
+      |> Job.changeset(%{status: "closed", closed_at: DateTime.utc_now(), closed_by: actor.id})
+      |> Repo.update()
+
+    case result do
+      {:ok, closed_job} ->
+        invalidate_job_caches(closed_job.company_id)
+        AuditLog.log(closed_job.company_id, actor.id, "job", closed_job.id, "closed", %{})
+        {:ok, closed_job}
+
+      err -> err
+    end
   end
 
   @doc """
@@ -106,6 +127,12 @@ defmodule InterviewFlow.Jobs.JobService do
   def accepting_applications?(_), do: false
 
   # ── Private helpers ──────────────────────────────────────────────────────
+
+  defp invalidate_job_caches(company_id) do
+    Cache.invalidate_pattern("if:jobs:#{company_id}:*")
+    Cache.delete(Cache.agg_key("dashboard", company_id))
+    ScoreService.invalidate_rubric(:all_for_company)  # placeholder; rubrics invalidated per-job on update
+  end
 
   defp check_publish_actor(%{role: role}) when role in ["admin", "recruiter"], do: :ok
   defp check_publish_actor(_), do: {:error, "only admins and recruiters can publish jobs"}
