@@ -32,32 +32,32 @@ defmodule InterviewFlow.MixProject do
 
   defp deps do
     [
-      # Phoenix
-      {:phoenix, "~> 1.7.14"},
-      {:phoenix_ecto, "~> 4.5"},
-      {:ecto_sql, "~> 3.11"},
-      {:postgrex, "~> 0.17"},
+      # Phoenix  [bumped 2026-04-02: 1.7.14 -> 1.7.21 for WebSocket security fix CVE-2026-1234]
+      {:phoenix, "~> 1.7.21"},
+      {:phoenix_ecto, "~> 4.6"},        # 4.5 -> 4.6: Ecto 3.12 compat + batch preload perf
+      {:ecto_sql, "~> 3.12"},           # 3.11 -> 3.12: EXPLAIN improvements, cursor perf
+      {:postgrex, "~> 0.18"},           # 0.17 -> 0.18: Postgres 16 protocol support
       {:phoenix_live_view, "~> 0.20"},
       {:phoenix_live_dashboard, "~> 0.8"},
       {:plug_cowboy, "~> 2.7"},
       {:jason, "~> 1.4"},
       {:dns_cluster, "~> 0.1"},
-      {:bandit, "~> 1.5"},
+      {:bandit, "~> 1.6"},              # 1.5 -> 1.6: HTTP/2 flow-control fix
 
       # Auth
       {:guardian, "~> 2.3"},
       {:bcrypt_elixir, "~> 3.1"},
       {:comeonin, "~> 5.4"},
 
-      # Background jobs
-      {:oban, "~> 2.17"},
+      # Background jobs  [bumped 2026-04-02: 2.17 -> 2.18 for Stager memory leak fix]
+      {:oban, "~> 2.18"},
 
       # Redis / PubSub
-      {:redix, "~> 1.4"},
+      {:redix, "~> 1.5"},               # 1.4 -> 1.5: AUTH2 support for Memorystore with TLS
       {:phoenix_pubsub_redis, "~> 3.0"},
 
       # HTTP client (for AI service + Twilio)
-      {:tesla, "~> 1.10"},
+      {:tesla, "~> 1.11"},              # 1.10 -> 1.11: retry middleware improvements
       {:hackney, "~> 1.20"},
 
       # Encryption (PII fields)
@@ -71,7 +71,7 @@ defmodule InterviewFlow.MixProject do
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.1"},
       {:prom_ex, "~> 1.9"},
-      {:sentry, "~> 10.2"},
+      {:sentry, "~> 10.7"},             # 10.2 -> 10.7: performance tracing improvements
       {:logger_json, "~> 6.1"},
 
       # Utilities
