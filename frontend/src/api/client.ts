@@ -149,8 +149,37 @@ export interface IceServer {
 
 // ─── Client factory ──────────────────────────────────────────────────────────
 
+// ── Token storage ─────────────────────────────────────────────────────────────
+//
+// Security note (March 2026): tokens are stored in localStorage for SPA
+// convenience. The primary XSS mitigations are:
+//   1. Content-Security-Policy strict-dynamic + nonce (server-set header)
+//   2. Input sanitization on all text rendered to DOM
+//   3. Subresource Integrity on all external scripts
+//
+// Alternative: HttpOnly cookie with CSRF token.  Tracked in backlog; blocked
+// on same-site WebRTC session cookie requirements.
+
 const TOKEN_STORAGE_KEY = "if_access_token";
 const REFRESH_STORAGE_KEY = "if_refresh_token";
+
+// ── Rate-limit backoff ────────────────────────────────────────────────────────
+
+interface RetryState {
+  retryAfter: number;  // epoch ms when we can retry
+  endpoint:   string;
+}
+const rateLimitedEndpoints = new Map<string, RetryState>();
+
+function isRateLimited(path: string): boolean {
+  const state = rateLimitedEndpoints.get(path);
+  if (!state) return false;
+  if (Date.now() >= state.retryAfter) {
+    rateLimitedEndpoints.delete(path);
+    return false;
+  }
+  return true;
+}
 
 class ApiClient {
   private readonly client: AxiosInstance;
@@ -190,6 +219,20 @@ class ApiClient {
     }
 
     const { status, config: originalConfig } = error.response;
+
+    // 429: Record retry-after and surface to caller
+    if (status === 429) {
+      const retryAfterSec = parseInt(
+        error.response.headers["retry-after"] ?? "60",
+        10,
+      );
+      const path = originalConfig?.url ?? "unknown";
+      rateLimitedEndpoints.set(path, {
+        retryAfter: Date.now() + retryAfterSec * 1000,
+        endpoint: path,
+      });
+      // Let error propagate with retry_after so UI can show countdown
+    }
 
     // 401: Try to refresh the token once, then retry the original request
     if (status === 401 && originalConfig && !originalConfig._retry) {
@@ -338,15 +381,24 @@ class ApiClient {
   // ─── Applications ────────────────────────────────────────────────────────
 
   async listApplications(params?: {
-    job_id?: string;
-    stage?: string;
-    status?: string;
-    limit?: number;
+    job_id?:   string;
+    stage?:    string;
+    status?:   string;
+    limit?:    number;
+    page?:     number;
   }): Promise<PaginatedResponse<Application>> {
     const res = await this.client.get<PaginatedResponse<Application>>(
       "/applications",
       { params },
     );
+
+    // Hydrate meta from response headers when server returns X-Pagination-*
+    const hasMore = res.headers["x-pagination-has-more"];
+    const page    = res.headers["x-pagination-page"];
+    if (hasMore !== undefined && res.data.meta) {
+      res.data.meta.has_more = hasMore === "true";
+    }
+
     return res.data;
   }
 
