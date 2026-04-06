@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "@/hooks/useAuthStore";
+import { useRateLimit } from "@/hooks/useRateLimit";
 import api from "@/api/client";
 import type { ApiError } from "@/api/client";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -18,7 +19,8 @@ interface FieldErrors {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const setUser = useAuthStore((s) => s.setUser);
+  const setUser  = useAuthStore((s) => s.setUser);
+  const { isLimited, countdown, recordLimit } = useRateLimit();
 
   const [form, setForm] = useState<FormState>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -43,6 +45,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isLimited) return;
     if (!validateForm()) return;
 
     setIsLoading(true);
@@ -53,10 +56,15 @@ export default function LoginPage() {
       setUser(data.user);
       navigate("/dashboard", { replace: true });
     } catch (err: unknown) {
-      const apiErr = err as { errors?: ApiError[] };
+      const apiErr = err as { status?: number; errors?: ApiError[]; retry_after?: number };
       const firstError = apiErr.errors?.[0];
 
-      if (firstError?.code === "unauthorized") {
+      if (apiErr.status === 429) {
+        recordLimit(apiErr.retry_after ?? 60);
+        setErrors({ general: `Too many login attempts. Please wait ${apiErr.retry_after ?? 60} seconds.` });
+      } else if (firstError?.code === "account_locked") {
+        setErrors({ general: "Account locked after too many failed attempts. Try again in 15 minutes." });
+      } else if (firstError?.code === "unauthorized") {
         setErrors({ general: "Invalid email or password" });
       } else {
         setErrors({
