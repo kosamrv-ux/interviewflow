@@ -94,6 +94,33 @@ defmodule InterviewFlow.Telemetry do
         description: "Oban jobs that raised an exception"
       ),
 
+      # Dead-letter tracking (added March 2026)
+      counter("interview_flow.oban.dead_letter_alert",
+        tags: [:queue, :priority],
+        description: "PagerDuty alerts fired for Oban discard threshold"
+      ),
+
+      # ---------- Cache (added March 2026) ----------
+      counter("interview_flow.cache.hit",
+        tags: [:key_prefix],
+        description: "Redis cache hits by key namespace prefix"
+      ),
+      counter("interview_flow.cache.miss",
+        tags: [:key_prefix],
+        description: "Redis cache misses (DB fallthrough triggered)"
+      ),
+
+      # ---------- Rate limiting (added March 2026) ----------
+      counter("interview_flow.rate_limit.exceeded",
+        tags: [:tier],
+        description: "Rate limit threshold exceeded by tier"
+      ),
+
+      # ---------- Audit log (added March 2026) ----------
+      counter("interview_flow.audit_log.archived",
+        description: "Audit log rows archived to GCS cold storage"
+      ),
+
       # ---------- Business events ----------
       counter("interview_flow.ai_scoring.requested",
         description: "Number of AI scoring requests dispatched"
