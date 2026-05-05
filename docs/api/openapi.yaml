@@ -1,0 +1,909 @@
+openapi: "3.0.3"
+info:
+  title: InterviewFlow API
+  version: "2.0.0"
+  description: |
+    InterviewFlow REST API v2.
+
+    ## Authentication
+
+    All API requests require authentication via Bearer token:
+
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    Tokens can be:
+    - **JWT session tokens** obtained via `/api/v1/auth/login`
+    - **API keys** created in the organization settings
+
+    ## Versioning
+
+    The current stable version is **v2** (`/api/v2/`). V1 is deprecated and will be
+    removed on **2027-05-01**. See the [migration guide](./V1_TO_V2_MIGRATION.md).
+
+    ## Rate Limiting
+
+    Rate limits are applied per API key or per user session:
+    - **Default**: 1000 requests/minute
+    - **Bulk endpoints**: 100 requests/minute
+
+    Rate limit headers are included in all responses:
+    - `X-RateLimit-Limit`
+    - `X-RateLimit-Remaining`
+    - `X-RateLimit-Reset`
+
+    ## Pagination
+
+    List endpoints return paginated results:
+    ```json
+    {
+      "data": [...],
+      "meta": {
+        "total": 142,
+        "page": 1,
+        "per_page": 20,
+        "total_pages": 8
+      }
+    }
+    ```
+
+    ## Error Responses
+
+    Errors use a structured format:
+    ```json
+    {
+      "errors": [
+        {"code": "validation_error", "field": "email", "message": "has already been taken"}
+      ]
+    }
+    ```
+
+  contact:
+    name: InterviewFlow Engineering
+    email: engineering@interviewflow.io
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.interviewflow.io
+    description: Production
+  - url: https://staging-api.interviewflow.io
+    description: Staging
+  - url: http://localhost:4000
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/v2/interviews:
+    get:
+      operationId: listInterviews
+      summary: List interviews
+      tags: [Interviews]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [scheduled, in_progress, completed, cancelled, no_show, rescheduled]
+        - name: job_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: candidate_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [scheduled_at, -scheduled_at, created_at, -created_at]
+            default: scheduled_at
+      responses:
+        "200":
+          description: List of interviews
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterviewListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      operationId: createInterview
+      summary: Schedule an interview
+      tags: [Interviews]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [interview]
+              properties:
+                interview:
+                  $ref: "#/components/schemas/InterviewInput"
+      responses:
+        "201":
+          description: Interview created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterviewResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v2/interviews/{id}:
+    get:
+      operationId: getInterview
+      summary: Get an interview
+      tags: [Interviews]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Interview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterviewResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: updateInterview
+      summary: Update an interview
+      tags: [Interviews]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                interview:
+                  $ref: "#/components/schemas/InterviewInput"
+      responses:
+        "200":
+          description: Updated interview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterviewResponse"
+
+    delete:
+      operationId: deleteInterview
+      summary: Delete an interview
+      tags: [Interviews]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Deleted
+
+  /api/v2/interviews/{id}/complete:
+    post:
+      operationId: completeInterview
+      summary: Mark interview as completed
+      tags: [Interviews]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Completed interview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterviewResponse"
+
+  /api/v2/candidates:
+    get:
+      operationId: listCandidates
+      summary: List candidates
+      tags: [Candidates]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: q
+          in: query
+          description: Full-text search query
+          schema:
+            type: string
+        - name: job_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateListResponse"
+
+    post:
+      operationId: createCandidate
+      summary: Create a candidate
+      tags: [Candidates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidate]
+              properties:
+                candidate:
+                  $ref: "#/components/schemas/CandidateInput"
+      responses:
+        "201":
+          description: Candidate created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateResponse"
+
+  /api/v2/candidates/{id}:
+    get:
+      operationId: getCandidate
+      summary: Get a candidate
+      tags: [Candidates]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Candidate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v2/candidates/{id}/score:
+    get:
+      operationId: getCandidateScore
+      summary: Get AI-generated composite score for a candidate
+      tags: [Candidates, Scoring]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Candidate score
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CandidateScore"
+
+  /api/v2/jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs
+      tags: [Jobs]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, open, closed, archived]
+      responses:
+        "200":
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v2/webhooks:
+    get:
+      operationId: listWebhooks
+      summary: List webhook endpoints
+      tags: [Webhooks]
+      responses:
+        "200":
+          description: List of webhooks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookListResponse"
+
+    post:
+      operationId: createWebhook
+      summary: Create a webhook endpoint
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [webhook]
+              properties:
+                webhook:
+                  $ref: "#/components/schemas/WebhookInput"
+      responses:
+        "201":
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookResponse"
+
+  /api/v2/api-keys:
+    get:
+      operationId: listApiKeys
+      summary: List API keys
+      tags: [API Keys]
+      responses:
+        "200":
+          description: List of API keys (secret never returned after creation)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyListResponse"
+
+    post:
+      operationId: createApiKey
+      summary: Create an API key
+      tags: [API Keys]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key:
+                  $ref: "#/components/schemas/ApiKeyInput"
+      responses:
+        "201":
+          description: API key created. The `key` field is only returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyCreateResponse"
+
+  /api/v2/organization:
+    get:
+      operationId: getOrganization
+      summary: Get the current organization
+      tags: [Organization]
+      responses:
+        "200":
+          description: Organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationResponse"
+
+  /api/v2/audit-log:
+    get:
+      operationId: listAuditLog
+      summary: List audit log entries (admin+ only)
+      tags: [Audit Log]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogListResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+
+    PerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+
+  schemas:
+    Interview:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [scheduled, in_progress, completed, cancelled, no_show, rescheduled]
+        scheduled_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_minutes:
+          type: integer
+        room_token:
+          type: string
+        candidate_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        notes:
+          type: string
+          nullable: true
+        inserted_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    InterviewInput:
+      type: object
+      required: [candidate_id, job_id, scheduled_at, duration_minutes]
+      properties:
+        candidate_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        scheduled_at:
+          type: string
+          format: date-time
+        duration_minutes:
+          type: integer
+          minimum: 15
+          maximum: 240
+        notes:
+          type: string
+
+    InterviewResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Interview"
+
+    InterviewListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Interview"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    Candidate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        composite_score:
+          type: number
+          format: float
+          nullable: true
+          description: AI-generated composite score (0–100). Renamed from `score` in v1.
+        resume_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Pre-signed GCS URL, expires in 1 hour.
+        status:
+          type: string
+        org_id:
+          type: string
+          format: uuid
+        inserted_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CandidateInput:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        location:
+          type: string
+
+    CandidateResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Candidate"
+
+    CandidateListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candidate"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    CandidateScore:
+      type: object
+      properties:
+        candidate_id:
+          type: string
+          format: uuid
+        composite_score:
+          type: number
+          format: float
+        dimensions:
+          type: object
+          description: Per-rubric-dimension scores
+        rubric_version:
+          type: string
+        scored_at:
+          type: string
+          format: date-time
+
+    WebhookEndpoint:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+        description:
+          type: string
+          nullable: true
+        last_triggered_at:
+          type: string
+          format: date-time
+          nullable: true
+        failure_count:
+          type: integer
+
+    WebhookInput:
+      type: object
+      required: [url, events]
+      properties:
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+              - interview.scheduled
+              - interview.completed
+              - interview.cancelled
+              - candidate.created
+              - candidate.updated
+              - candidate.rejected
+              - application.submitted
+              - application.stage_changed
+              - scoring.completed
+              - ranking.updated
+        description:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+
+    WebhookResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/WebhookEndpoint"
+
+    WebhookListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookEndpoint"
+
+    ApiKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        key_prefix:
+          type: string
+          description: First 16 characters of the key, for identification only.
+        scopes:
+          type: array
+          items:
+            type: string
+            enum: [read, write, admin]
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        inserted_at:
+          type: string
+          format: date-time
+
+    ApiKeyInput:
+      type: object
+      required: [name, scopes]
+      properties:
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+            enum: [read, write, admin]
+        expires_at:
+          type: string
+          format: date-time
+
+    ApiKeyCreateResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/ApiKey"
+        key:
+          type: string
+          description: The full API key. Only returned once at creation time.
+        notice:
+          type: string
+
+    ApiKeyListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiKey"
+
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+          enum: [starter, growth, enterprise]
+        sso_enabled:
+          type: boolean
+        sso_provider:
+          type: string
+          nullable: true
+        max_seats:
+          type: integer
+        inserted_at:
+          type: string
+          format: date-time
+
+    OrganizationResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Organization"
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+          format: uuid
+        actor_id:
+          type: string
+          format: uuid
+        actor_email:
+          type: string
+        metadata:
+          type: object
+        inserted_at:
+          type: string
+          format: date-time
+
+    AuditLogListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLogEntry"
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total_pages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        field:
+          type: string
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/Error"
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+tags:
+  - name: Interviews
+    description: Video interview scheduling and management
+  - name: Candidates
+    description: Candidate profile management
+  - name: Jobs
+    description: Job posting management
+  - name: Scoring
+    description: AI-powered candidate scoring
+  - name: Webhooks
+    description: Outgoing webhook configuration
+  - name: API Keys
+    description: Programmatic API access management
+  - name: Organization
+    description: Organization settings and members
+  - name: Audit Log
+    description: Security audit trail (admin+)
