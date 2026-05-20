@@ -3,6 +3,13 @@
  *
  * Separates signaling logic from the InterviewRoomPage component,
  * making it testable and reusable.
+ *
+ * Safari fix (May 2026): video preview would freeze after ~90 seconds during
+ * ICE renegotiation on Safari 17. Root cause: renegotiation was calling
+ * getUserMedia again, replacing the MediaStream object while the <video>
+ * element still held a reference to the old (ended) stream.
+ * Fix: acquire media once; on renegotiation, re-add existing tracks and
+ * re-assign video.srcObject from the cached ref rather than a new stream.
  */
 
 import { useRef, useState, useCallback, useEffect } from "react";
