@@ -6,6 +6,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-14 — Enterprise & Ship Phase
+
+### Added
+
+#### Enterprise Features
+- Multi-tenancy: `org_id` scoping on all resources (jobs, candidates, interviews, applications, audit logs)
+- `Organizations` context with role-based access: owner, admin, member, viewer
+- `OrgScope` and `RequireOrgRole` plugs for per-request tenant isolation
+- SSO integration stub: Okta OIDC provider with `SSOController` for SAML/OAuth2 enterprise login
+- Webhook delivery system: HMAC-SHA256 signed outgoing events with Oban retry and delivery log
+- API key management: create/rotate/revoke with bcrypt-hashed storage and `if_live_` prefix
+- Audit log viewer endpoint: paginated, filterable, CSV exportable (admin+ only)
+- `OrganizationSettingsPage`: general, SSO, members, danger-zone tabs
+- `ApiKeysPage`: create, rotate, revoke UI with one-time key reveal
+
+#### API v2
+- `/api/v2/` route structure with versioned controllers
+- Consistent `{data, meta}` response envelope across all list and single-resource endpoints
+- ISO8601 timestamps (was Unix integers in v1)
+- Structured error responses: `{errors: [{code, message, field?}]}`
+- `composite_score` field (renamed from `score` in v1)
+- Interview status enum expanded: `no_show`, `rescheduled`
+- OpenAPI 3.0 specification (`docs/api/openapi.yaml`)
+- V1 → V2 migration guide (`docs/api/V1_TO_V2_MIGRATION.md`)
+
+#### Integrations
+- Greenhouse ATS: candidate import, stage sync, AI scorecard export
+- Slack notifications: interview scheduled, scoring completed, no-show alerts
+- Incoming webhook handlers for Greenhouse and Slack with signature verification
+- Centralized integration error handler: rate limiting, auth failures, pool exhaustion
+
+#### Performance
+- N+1 query fix in interview listing (JOIN preload): 387ms → 18ms (p50)
+- AI batch scoring with asyncio concurrency: 50 candidates 4 min → 35 sec
+- Composite indexes on org-scoped query patterns (interviews, applications, audit_logs)
+
+### Fixed
+- Empty list endpoints now always return `{data: [], meta: {...}}` instead of null
+- Timezone normalization for interview `scheduled_at`: always convert to UTC before storage
+- Candidate ranking table sort instability on tied composite scores
+- UTF-8 encoding in resume text extraction: detect and transcode Windows-1252/Latin-1
+- Video preview freeze on Safari WebRTC ICE renegotiation
+- Race condition in concurrent webhook delivery retry state updates (pg advisory locks)
+- Org switcher selection not persisting after page refresh
+- API key `last_used_at` not updating on v2 routes (api key vs JWT bearer disambiguation)
+- Scheduler date picker off-by-one during DST transitions
+- SSO token refresh loop on expired Okta sessions
+- Audit log pagination reset on filter change
+- Webhook signature verification for URL-encoded payloads
+- Org_id leaking across tenant boundaries in cache keys
+
+### Changed
+- API key authentication header: `X-API-Key` deprecated in favor of `Authorization: Bearer`
+- Resume URLs in v2: pre-signed GCS links (1hr TTL) returned directly in candidate response
+- V1 routes deprecated — removal scheduled for 2027-05-01
+
+### Documentation
+- `docs/CONTRIBUTING.md`: full development setup, code style, PR process, migration rules
+- `docs/api/openapi.yaml`: OpenAPI 3.0 spec for all v2 endpoints
+- `docs/api/V1_TO_V2_MIGRATION.md`: migration checklist and per-change instructions
+- `docs/adrs/ADR-008.md`: Multi-tenancy implementation decision
+- `docs/adrs/ADR-009.md`: Final enterprise architecture decisions
+
+---
+
+## [0.5.0] — 2026-02-28 — MVP & Core Features Phase
+
+### Added
+- Production multi-stage Dockerfiles for backend, frontend, and AI service
+- `PurgeExpiredSessionsWorker` — nightly cleanup of stale video sessions
+- `SendInvitationWorker` — transactional email delivery for team invitations
+- `Invitation` schema with secure token generation and 7-day expiry
+- `CodingChallenge` schema for in-session live coding assessments (Monaco Editor)
+- Invitations migration with partial unique index on pending invitations
+- `Rubric` class in AI service with interview-type presets and composite scoring
+- `useWebRTC` hook — encapsulates RTCPeerConnection lifecycle
+- `useInterviewChannel` hook — Phoenix Channel signaling and chat management
+- `useDebounce` hook — debounced input for search fields
+- `CandidatesPage` — searchable, tag-filterable candidate list with add modal
+- `SettingsPage` — team management, invite modal, and profile editor
+- Telemetry supervisor with Ecto, Phoenix, Oban, and business-level metrics
+- `.credo.exs` — strict Credo rules for readability, design, and refactoring
+- `pyproject.toml` — ruff, mypy, and pytest configuration for AI service
+- nginx.conf — SPA routing, WebSocket proxy, and asset caching configuration
+
+---
+
 ## [0.4.0] — 2026-04-17 — Scale & Security Phase
 
 ### Added
@@ -56,34 +143,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-### Older (pre-scale)
-
-### Added
-- Production multi-stage Dockerfiles for backend, frontend, and AI service
-- `PurgeExpiredSessionsWorker` — nightly cleanup of stale video sessions
-- `SendInvitationWorker` — transactional email delivery for team invitations
-- `Invitation` schema with secure token generation and 7-day expiry
-- `CodingChallenge` schema for in-session live coding assessments
-- Invitations migration with partial unique index on pending invitations
-- `Rubric` class in AI service with interview-type presets and composite scoring
-- `useWebRTC` hook — encapsulates RTCPeerConnection lifecycle
-- `useInterviewChannel` hook — Phoenix Channel signaling and chat management
-- `useDebounce` hook — debounced input for search fields
-- `CandidatesPage` — searchable, tag-filterable candidate list with add modal
-- `SettingsPage` — team management, invite modal, and profile editor
-- Telemetry supervisor with Ecto, Phoenix, Oban, and business-level metrics
-- `.credo.exs` — strict Credo rules for readability, design, and refactoring
-- `pyproject.toml` — ruff, mypy, and pytest configuration for AI service
-- nginx.conf — SPA routing, WebSocket proxy, and asset caching configuration
-
-### Changed
-- N/A
-
-### Fixed
-- N/A
-
----
-
 ## [0.1.0] — 2025-11-15
 
 ### Added
@@ -104,5 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture Decision Records: ADR-001 (Elixir), ADR-002 (PostgreSQL), ADR-003 (Vertex AI)
 - RFC-001 (database schema), RFC-002 (REST API design)
 
-[Unreleased]: https://github.com/kosamrv-ux/interviewflow/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kosamrv-ux/interviewflow/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/kosamrv-ux/interviewflow/compare/v0.5.0...v1.0.0
+[0.5.0]: https://github.com/kosamrv-ux/interviewflow/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/kosamrv-ux/interviewflow/compare/v0.1.0...v0.4.0
 [0.1.0]: https://github.com/kosamrv-ux/interviewflow/releases/tag/v0.1.0
