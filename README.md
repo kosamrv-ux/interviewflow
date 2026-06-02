@@ -193,9 +193,87 @@ See `.env.example` for the full list with comments. Key variables:
 
 ---
 
+## Production Deployment
+
+### Infrastructure
+
+InterviewFlow v1.0 is deployed on Google Cloud Platform:
+
+| Component | Service |
+|-----------|---------|
+| API (Elixir/Phoenix) | Cloud Run (auto-scaling, 3–50 replicas) |
+| Database | Cloud SQL for PostgreSQL 15 (HA, automated backups) |
+| Cache | Memorystore for Redis 7 |
+| Object Storage | Cloud Storage (recordings, resumes) |
+| AI Scoring | Cloud Run (Python FastAPI) + Vertex AI Gemini |
+| CDN | Cloud CDN (static assets, 1-year cache-control) |
+| Secrets | Secret Manager |
+| Monitoring | Cloud Monitoring + Grafana dashboards |
+
+### Deployment Process
+
+Deployments are automated via GitHub Actions (`.github/workflows/deploy.yml`):
+
+1. Parallel Docker image builds (backend, frontend, AI service)
+2. Terraform plan
+3. Manual approval gate (production environment)
+4. Terraform apply → Cloud Run revision rollout
+5. Ecto migration job (Cloud Run Jobs)
+6. Smoke test suite
+
+```bash
+# Manual deploy (emergency)
+make deploy ENV=production
+
+# Rollback to previous revision
+make rollback ENV=production
+
+# View current revision traffic split
+gcloud run revisions list --service=interviewflow-api --region=us-central1
+```
+
+See `docs/DEPLOYMENT.md` for full runbook, rollback procedures, and PITR restore guide.
+
+### Health Checks
+
+| Endpoint | Expected |
+|----------|----------|
+| `GET /api/v2/health` | `{status: "ok", db: "ok", redis: "ok"}` |
+| `GET /api/v2/health/detailed` | Per-component status (admin only) |
+
+### Environment Variables (Production)
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Cloud SQL connection string (via Secret Manager) |
+| `REDIS_URL` | Memorystore Redis URL |
+| `SECRET_KEY_BASE` | Phoenix session secret (rotate annually) |
+| `GUARDIAN_SECRET_KEY` | JWT signing secret |
+| `GCP_PROJECT_ID` | GCP project ID |
+| `GCS_BUCKET_NAME` | Cloud Storage bucket for media |
+| `VERTEX_AI_ENDPOINT` | Vertex AI prediction endpoint |
+| `AI_SERVICE_URL` | Internal Cloud Run URL of Python scoring service |
+| `GREENHOUSE_WEBHOOK_SECRET` | Greenhouse webhook HMAC secret |
+| `SLACK_SIGNING_SECRET` | Slack app signing secret |
+| `OKTA_CLIENT_SECRET` | Okta SSO client secret (per-org, stored in org.sso_config) |
+
+---
+
 ## API Overview
 
-All endpoints are versioned under `/api/v1`. Authentication uses Bearer JWT tokens issued by `POST /api/v1/auth/login`.
+The stable API is **v2**, available at `/api/v2/`. See `docs/api/openapi.yaml` for the
+full OpenAPI 3.0 specification.
+
+V1 (`/api/v1/`) is deprecated and will be removed on 2027-05-01.
+See `docs/api/V1_TO_V2_MIGRATION.md` for the migration guide.
+
+All endpoints require a Bearer token:
+```
+Authorization: Bearer <jwt_token_or_api_key>
+```
+
+JWT tokens are issued by `POST /api/v2/auth/login`.
+API keys can be created in the organization settings or via `POST /api/v2/api-keys`.
 
 ### Authentication
 | Method | Path | Description |
@@ -283,20 +361,8 @@ interviewflow/
 
 ## Contributing
 
-1. Fork the repository and create a feature branch: `git checkout -b feat/my-feature`
-2. Follow the commit convention: `type(scope): description` (e.g., `feat(api): add interview scoring endpoint`)
-3. Ensure all tests pass: `make test`
-4. Ensure linting passes: `make lint`
-5. Open a pull request against `main` with a clear description of the change and any relevant screenshots or API output
-
-### Commit Types
-- `feat` — new feature
-- `fix` — bug fix
-- `docs` — documentation only
-- `chore` — tooling, dependencies, config
-- `test` — adding or updating tests
-- `refactor` — code change that neither fixes a bug nor adds a feature
-- `perf` — performance improvement
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full development guide, including
+setup, code style, commit conventions, PR process, and database migration rules.
 
 ---
 
