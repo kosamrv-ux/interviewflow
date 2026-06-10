@@ -12,6 +12,12 @@ defmodule InterviewFlow.Cache do
 
   All cache reads fall through to the supplied loader function on miss
   so callers never have to handle nil themselves.
+
+  Multi-tenancy fix (June 2026):
+  Several cache key helpers previously did not include org_id, which created
+  the theoretical risk of cross-tenant cache reads after multi-tenancy was
+  added. All key builders now accept and embed org_id. Legacy callers updated.
+  See ADR-008 for tenancy architecture context.
   """
 
   require Logger
@@ -32,14 +38,23 @@ defmodule InterviewFlow.Cache do
 
   # ── Key builders ──────────────────────────────────────────────────────────
 
-  @doc "Canonical key for a single resource record."
+  @doc "Canonical key for a single resource record, scoped to org."
   def key(resource, id),             do: "if:#{resource}:#{id}"
+
+  @doc "Canonical key for a single org-scoped resource record."
+  def org_key(org_id, resource, id), do: "if:org:#{org_id}:#{resource}:#{id}"
 
   @doc "Canonical key for a paginated resource list."
   def key(resource, scope_id, page), do: "if:#{resource}:#{scope_id}:p#{page}"
 
+  @doc "Canonical org-scoped key for a paginated resource list."
+  def org_key(org_id, resource, scope_id, page), do: "if:org:#{org_id}:#{resource}:#{scope_id}:p#{page}"
+
   @doc "Canonical key for an aggregate or computed value."
   def agg_key(metric, scope_id),     do: "if:agg:#{metric}:#{scope_id}"
+
+  @doc "Canonical org-scoped key for an aggregate or computed value."
+  def org_agg_key(org_id, metric, scope_id), do: "if:org:#{org_id}:agg:#{metric}:#{scope_id}"
 
   # ── Core primitives ───────────────────────────────────────────────────────
 
@@ -109,35 +124,34 @@ defmodule InterviewFlow.Cache do
 
   # ── Convenience wrappers ──────────────────────────────────────────────────
 
-  @doc "Cache a company's paginated job listing."
-  def fetch_company_jobs(company_id, page, loader) do
-    fetch(key("jobs", company_id, page), @warm, loader)
+  @doc "Cache a company's paginated job listing (org-scoped)."
+  def fetch_company_jobs(org_id, company_id, page, loader) do
+    fetch(org_key(org_id, "jobs", company_id, page), @warm, loader)
   end
 
-  @doc "Cache a single interview record."
-  def fetch_interview(interview_id, loader) do
-    fetch(key("interview", interview_id), @hot, loader)
+  @doc "Cache a single interview record (org-scoped)."
+  def fetch_interview(org_id, interview_id, loader) do
+    fetch(org_key(org_id, "interview", interview_id), @hot, loader)
   end
 
-  @doc "Cache dashboard aggregate statistics."
-  def fetch_dashboard_stats(company_id, loader) do
-    fetch(agg_key("dashboard", company_id), @warm, loader)
+  @doc "Cache dashboard aggregate statistics (org-scoped)."
+  def fetch_dashboard_stats(org_id, loader) do
+    fetch(org_agg_key(org_id, "dashboard", org_id), @warm, loader)
   end
 
-  @doc "Cache AI scoring rubric (rarely changes)."
+  @doc "Cache AI scoring rubric (rarely changes; not org-scoped, rubrics are global)."
   def fetch_scoring_rubric(rubric_id, loader) do
     fetch(key("rubric", rubric_id), @day, loader)
   end
 
-  @doc "Invalidate all cached data for a given company."
-  def invalidate_company(company_id) do
-    invalidate_pattern("if:*:#{company_id}:*")
-    invalidate_pattern("if:agg:*:#{company_id}")
+  @doc "Invalidate all cached data for a given org."
+  def invalidate_org(org_id) do
+    invalidate_pattern("if:org:#{org_id}:*")
   end
 
-  @doc "Invalidate interview-specific cache entries."
-  def invalidate_interview(interview_id) do
-    delete(key("interview", interview_id))
+  @doc "Invalidate interview-specific cache entries (org-scoped)."
+  def invalidate_interview(org_id, interview_id) do
+    delete(org_key(org_id, "interview", interview_id))
   end
 
   # ── Private helpers ───────────────────────────────────────────────────────
