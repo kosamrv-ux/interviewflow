@@ -1,7 +1,8 @@
 openapi: "3.0.3"
 info:
   title: InterviewFlow API
-  version: "2.0.0"
+  version: "2.0.1"
+  x-release-date: "2026-06-14"
   description: |
     InterviewFlow REST API v2.
 
@@ -401,6 +402,108 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OrganizationResponse"
+
+  /api/v2/auth/login:
+    post:
+      operationId: login
+      summary: Authenticate and receive JWT token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT access token
+                  refresh_token:
+                    type: string
+                  user:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      email:
+                        type: string
+                      name:
+                        type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v2/auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Refresh an expired JWT token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: New token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  refresh_token:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v2/health:
+    get:
+      operationId: healthCheck
+      summary: Service health check
+      tags: [System]
+      security: []
+      responses:
+        "200":
+          description: All systems operational
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+                  db:
+                    type: string
+                    enum: [ok, error]
+                  redis:
+                    type: string
+                    enum: [ok, error]
+                  version:
+                    type: string
 
   /api/v2/audit-log:
     get:
